@@ -1,0 +1,21 @@
+linuxmuster-opnsense (7.3.0) unstable; urgency=low
+
+  * Add HTTP request timeouts to avoid hanging hooks/CLI commands.
+  * URL-encode alias and voucher path segments for safe API endpoints.
+  * Validate school names before building configuration file paths.
+
+ -- Kevin Stenzel <k.stenzel@fair-comp.de>  Mon, 19 Jan 2026 10:30:58 +0100
+
+
+linuxmuster-opnsense (7.2.1) unstable; urgency=low
+
+  * Hook script that automatically terminates OPNsense WLAN sessions when users are removed from the WIFI group.
+
+ -- Kevin Stenzel <k.stenzel@fair-comp.de>  Thu, 30 Dec 2024 10:41:00 +0000
+
+
+linuxmuster-opnsense (7.2.0) unstable; urgency=low
+
+  * Initial release
+
+ -- Kevin Stenzel <k.stenzel@fair-comp.de>  Thu, 19 Dec 2024 10:00:00 +0000

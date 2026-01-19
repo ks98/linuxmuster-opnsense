@@ -1,0 +1,11 @@
+Source: linuxmuster-opnsense
+Section: admin
+Priority: optional
+Maintainer: Kevin Stenzel <k.stenzel@fair-comp.de>
+Build-Depends: debhelper-compat (= 13), python3, python3-setuptools
+Standards-Version: 4.5.0
+
+Package: linuxmuster-opnsense
+Architecture: all
+Depends: python3, python3-requests, linuxmuster-tools7, ${misc:Depends}, ${python3:Depends}
+Description: Integrationstools für linuxmuster.net und OPNsense

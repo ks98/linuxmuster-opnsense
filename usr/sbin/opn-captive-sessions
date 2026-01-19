@@ -1,0 +1,118 @@
+#!/usr/bin/env python3
+import sys
+import argparse
+from linuxmusterOPNsense.LinuxmusterOPNsenseAPI import LinuxmusterOPNsenseAPI
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="List or disconnect OPNsense Captive Portal sessions."
+    )
+    parser.add_argument(
+        "--school",
+        default="default-school",
+        help="Name of the school config (INI file without .ini) in /etc/linuxmuster/opnsense/"
+    )
+    parser.add_argument(
+        "--search",
+        default="",
+        help="Search phrase for sessions (e.g. username, IP, etc.)"
+    )
+    parser.add_argument(
+        "--zone",
+        nargs="*",
+        type=int,
+        default=[],
+        help="List of zone IDs to filter (e.g. --zone 0 1)"
+    )
+    parser.add_argument(
+        "--kill-username",
+        default="",
+        help="Disconnect all sessions for this *exact* username."
+    )
+    parser.add_argument(
+        "--kill-sessionid",
+        default="",
+        help="Disconnect a single session by sessionId."
+    )
+
+    args = parser.parse_args()
+
+    # Initialize API
+    try:
+        api = LinuxmusterOPNsenseAPI(school_name=args.school)
+    except Exception as e:
+        print(f"Error loading school configuration '{args.school}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # If we want to kill a specific sessionId
+    if args.kill_sessionid:
+        print(f"-> Disconnecting session with ID: {args.kill_sessionid}")
+        try:
+            res = api.disconnect_captive_session(args.kill_sessionid)
+            print("OPNsense API response:", res)
+        except Exception as e:
+            print(f"Error disconnecting session ID {args.kill_sessionid}: {e}", file=sys.stderr)
+            sys.exit(1)
+        sys.exit(0)
+
+    # If we want to kill all sessions for a specific username
+    if args.kill_username:
+        print(f"-> Searching sessions for exact username: {args.kill_username}")
+        try:
+            sessions = api.search_captive_sessions(
+                current=1,
+                rowCount=-1,  # -1 means all
+                searchPhrase=args.kill_username,
+                selected_zones=args.zone
+            )
+        except Exception as e:
+            print(f"Error searching sessions for user {args.kill_username}: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        disconnect_count = 0
+        if "rows" in sessions:
+            for s in sessions["rows"]:
+                # Only disconnect if the userName exactly matches
+                if s.get("userName") == args.kill_username:
+                    sid = s.get("sessionId")
+                    if sid:
+                        try:
+                            print(f"   -> Disconnecting session {sid} for user {args.kill_username}")
+                            api.disconnect_captive_session(sid)
+                            disconnect_count += 1
+                        except Exception as e:
+                            print(f"   Error disconnecting session {sid}: {e}", file=sys.stderr)
+                # If the user name doesn't match exactly, do nothing
+
+        print(f"Done. A total of {disconnect_count} session(s) were disconnected for user '{args.kill_username}'.")
+        sys.exit(0)
+
+    # Otherwise, list sessions
+    print("-> Listing captive portal sessions...")
+    try:
+        sessions = api.search_captive_sessions(
+            current=1,
+            rowCount=-1,
+            searchPhrase=args.search,
+            selected_zones=args.zone
+        )
+    except Exception as e:
+        print(f"Error searching sessions: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if "rows" in sessions:
+        print(f"Number of sessions found: {sessions.get('total', 0)}\n")
+        for idx, s in enumerate(sessions["rows"], start=1):
+            print(
+                f"{idx:3d}) sessionId={s.get('sessionId')}  "
+                f"userName='{s.get('userName')}'  "
+                f"ipAddress={s.get('ipAddress')}  "
+                f"zoneid={s.get('zoneid')}  "
+                f"startTime={s.get('startTime')}  "
+                f"authenticated_via={s.get('authenticated_via')}"
+            )
+    else:
+        print("No sessions found or unexpected response format.")
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,45 @@
+#!/bin/bash
+
+# This script is invoked by GroupManager._run_post_hook().
+# Parameters:
+#   1) action   (e.g. "remove")
+#   2) group    (e.g. "wifi")
+#   3) members  (comma-separated list of members, e.g. "alice,bob")
+
+action="$1"
+group="$2"
+members="$3"
+
+# We assume the "default-school" if not set via environment or other means.
+SCHOOL="${SCHOOL:-default-school}"
+CONFIG_FILE="/etc/linuxmuster/opnsense/${SCHOOL}.ini"
+
+# Check if the config file exists; if not, do nothing (or show an error)
+if [ ! -f "$CONFIG_FILE" ]; then
+  echo "Error: Cannot find config file $CONFIG_FILE. Cannot determine kill_session setting." >&2
+  exit 0
+fi
+
+# Read kill_session setting from the [wlan] section in the config
+# We parse the lines between '[wlan]' and the next '[.*]' section, then extract kill_session
+kill_session=$(sed -n '/^\[wlan\]/,/\[.*\]/{/^\[.*\]/!p}' "$CONFIG_FILE" \
+    | awk -F= '/^[[:space:]]*kill_session[[:space:]]*=/{print $2}' \
+    | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+
+# If kill_session is not 'true', we skip everything
+if [ "$kill_session" != "true" ]; then
+  # No action needed
+  exit 0
+fi
+
+# Only proceed if users are being removed from the WIFI group
+if [ "$action" = "remove" ] && [ "$group" = "wifi" ]; then
+    IFS=',' read -ra USERS <<< "$members"
+    for user in "${USERS[@]}"; do
+        # Attempt to kill the WLAN session for the user
+        /usr/sbin/opn-captive-sessions --school "$SCHOOL" --kill-username "$user" || \
+            echo "Error: could not kill WLAN session for user '$user'." >&2
+    done
+fi
+
+exit 0

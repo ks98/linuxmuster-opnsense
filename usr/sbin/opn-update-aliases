@@ -1,0 +1,114 @@
+#!/usr/bin/env python3
+import sys
+import argparse
+from linuxmusterOPNsense.LinuxmusterOPNsenseAPI import LinuxmusterOPNsenseAPI
+from linuxmusterTools.devices.devices import Devices
+
+def main():
+    # Argparse help text is user-facing -> in English
+    parser = argparse.ArgumentParser(
+        description="Updates OPNsense aliases for a given school."
+    )
+    parser.add_argument(
+        "--school",
+        help="Name of the school config to use",
+        default="default-school"
+    )
+    parser.add_argument(
+        "--quiet",
+        help="Suppress all normal output except errors",
+        action="store_true"
+    )
+
+    args = parser.parse_args()
+
+    try:
+        # Initialize API and read configuration
+        api = LinuxmusterOPNsenseAPI(school_name=args.school)
+        school_conf = api.school_config
+
+        # Retrieve devices from the linuxmusterTools library
+        dev = Devices(school=school_conf.school_name_conf)
+        all_devices = dev.filter()
+
+        # Counters to keep track of how many aliases we update
+        updated_aliases_count = 0
+
+        # Data structures for reporting
+        updated_roles = []
+        updated_rooms = []
+        updated_hwgroups = []
+
+        # ----- Roles Aliases -----
+        # Check if role synchronization is enabled
+        if school_conf.sync_roles:
+            roles = set(d.get('sophomorixRole') for d in all_devices if 'sophomorixRole' in d)
+            for role in roles:
+                if role:
+                    alias_name = f"{school_conf.roles_prefix}{role}"
+                    ips = [x['ip'] for x in all_devices if x.get('sophomorixRole') == role and 'ip' in x]
+                    if ips:
+                        api.create_or_update_alias(alias_name, ips)
+                        updated_aliases_count += 1
+                        updated_roles.append(alias_name)
+
+        # ----- Rooms Aliases -----
+        if school_conf.sync_rooms:
+            rooms = set(d.get('room') for d in all_devices if 'room' in d)
+            for room in rooms:
+                if room:
+                    alias_name = f"{school_conf.rooms_prefix}{room}"
+                    ips = [x['ip'] for x in all_devices if x.get('room') == room and 'ip' in x]
+                    if ips:
+                        api.create_or_update_alias(alias_name, ips)
+                        updated_aliases_count += 1
+                        updated_rooms.append(alias_name)
+
+        # ----- Hardware Groups Aliases -----
+        if school_conf.sync_hwgroups:
+            hwgroups = set(d.get('group') for d in all_devices if 'group' in d)
+            for hwg in hwgroups:
+                if hwg:
+                    alias_name = f"{school_conf.hwgroups_prefix}{hwg}"
+                    ips = [x['ip'] for x in all_devices if x.get('group') == hwg and 'ip' in x]
+                    if ips:
+                        api.create_or_update_alias(alias_name, ips)
+                        updated_aliases_count += 1
+                        updated_hwgroups.append(alias_name)
+
+        # ----- Output -----
+        if not args.quiet:
+            print("")
+            print(f"######## OPNsense Alias Update Report for '{args.school}' ########")
+            print("")
+
+            print(f"Roles synchronization: {'enabled' if school_conf.sync_roles else 'disabled'}")
+            print(f"Rooms synchronization: {'enabled' if school_conf.sync_rooms else 'disabled'}")
+            print(f"Hardware groups synchronization: {'enabled' if school_conf.sync_hwgroups else 'disabled'}")
+            print("")
+
+            if updated_roles:
+                print("Updated Role Aliases:")
+                for role_alias in updated_roles:
+                    print(f"  - {role_alias}")
+            if updated_rooms:
+                print("\nUpdated Room Aliases:")
+                for room_alias in updated_rooms:
+                    print(f"  - {room_alias}")
+            if updated_hwgroups:
+                print("\nUpdated Hardware Group Aliases:")
+                for hwg_alias in updated_hwgroups:
+                    print(f"  - {hwg_alias}")
+
+            print("")
+            print(f"Total updated aliases: {updated_aliases_count}")
+            print(f"All configured aliases have been successfully updated for '{args.school}'.")
+            print("")
+
+    except Exception as e:
+        # Always print errors
+        print(f"Error updating aliases: {e}", file=sys.stderr)
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

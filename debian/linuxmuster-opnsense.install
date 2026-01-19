@@ -1,0 +1,5 @@
+etc/linuxmuster/opnsense/default-school.ini.default          etc/linuxmuster/opnsense/
+etc/linuxmuster/tools/hooks/group-manager/99_kill_wlan_sessions  etc/linuxmuster/tools/hooks/group-manager/
+usr/lib/python3/dist-packages/linuxmusterOPNsense/*  usr/lib/python3/dist-packages/linuxmusterOPNsense/
+usr/sbin/*                              usr/sbin/
+var/lib/linuxmuster/hooks/device-import.post.d/*    var/lib/linuxmuster/hooks/device-import.post.d/

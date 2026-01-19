@@ -1,0 +1,217 @@
+#!/usr/bin/env python3
+import sys
+import argparse
+from linuxmusterOPNsense.LinuxmusterOPNsenseAPI import LinuxmusterOPNsenseAPI
+
+def parse_time_to_seconds(timestr):
+    """
+    Converts a time argument (e.g. '4h', '1d', '24h', '0', 'never', 'none') into seconds.
+    Raises a ValueError if the format is invalid.
+    """
+    timestr = timestr.lower().strip()
+    if timestr in ("0", "never", "none"):
+        return 0
+    if timestr.endswith('d'):
+        try:
+            days = int(timestr[:-1])
+            return days * 24 * 3600
+        except ValueError:
+            raise ValueError(f"Invalid time format: {timestr}")
+    if timestr.endswith('h'):
+        try:
+            hours = int(timestr[:-1])
+            return hours * 3600
+        except ValueError:
+            raise ValueError(f"Invalid time format: {timestr}")
+    if timestr.isdigit():
+        return int(timestr) * 3600
+    raise ValueError(f"Unknown time format: {timestr}")
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Manages OPNsense Captive Portal Vouchers (create, list, delete)."
+    )
+    parser.add_argument(
+        "--school",
+        default="default-school",
+        help="Name of the school configuration (INI file without .ini) in /etc/linuxmuster/opnsense/"
+    )
+
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    # ---------------------------------------------------------
+    # Subcommand: list
+    list_parser = subparsers.add_parser(
+        "list",
+        help="Lists all voucher groups or vouchers within a group if a group name is provided."
+    )
+    list_parser.add_argument(
+        "group",
+        nargs="?",
+        default=None,
+        help="Name of the voucher group (optional). If omitted, all groups are listed."
+    )
+
+    # ---------------------------------------------------------
+    # Subcommand: create
+    create_parser = subparsers.add_parser(
+        "create",
+        help="Creates new vouchers in a specified group."
+    )
+    create_parser.add_argument("group", help="Name of the voucher group, e.g. 'test'.")
+    create_parser.add_argument(
+        "--validity",
+        default="4h",
+        help="Validity period of each voucher (e.g. '4h', '1d'). Default: 4h."
+    )
+    create_parser.add_argument(
+        "--expiry",
+        default="never",
+        help="Time until a voucher expires (e.g. '24h', '2d', 'never'). Default: 'never'."
+    )
+    create_parser.add_argument(
+        "--count",
+        type=int,
+        default=5,
+        help="Number of vouchers to create. Default: 5."
+    )
+
+    # ---------------------------------------------------------
+    # Subcommand: delete
+    delete_parser = subparsers.add_parser(
+        "delete",
+        help="Deletes (expires/drops) one or more vouchers or entire groups."
+    )
+    delete_parser.add_argument("group", help="Name of the voucher group.")
+    delete_parser.add_argument(
+        "--username",
+        help="Expire a single voucher by username."
+    )
+    delete_parser.add_argument(
+        "--all-expired",
+        action="store_true",
+        help="Delete all expired vouchers in this group."
+    )
+    delete_parser.add_argument(
+        "--all",
+        action="store_true",
+        help="Drop the entire group (including all vouchers)."
+    )
+
+    args = parser.parse_args()
+
+    # Initialize API
+    try:
+        api = LinuxmusterOPNsenseAPI(school_name=args.school)
+    except Exception as e:
+        print(f"Error loading school configuration '{args.school}': {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # --------------------------------------------------------------------------
+    # SUBCOMMAND: list
+    # --------------------------------------------------------------------------
+    if args.command == "list":
+        if not args.group:
+            # List groups
+            try:
+                groups = api.list_voucher_groups()
+                print("Available voucher groups:")
+                if isinstance(groups, list):
+                    for g in groups:
+                        print(f"  - {g}")
+                else:
+                    print(f"Unexpected format for voucher groups: {groups}")
+
+                print("\nTo list vouchers in a specific group, run:")
+                print("   opn-captive-voucher list <group>\n")
+
+            except Exception as e:
+                print(f"Error listing voucher groups: {e}", file=sys.stderr)
+                sys.exit(1)
+        else:
+            # List vouchers in a group
+            try:
+                vouchers = api.list_vouchers_in_group(args.group)
+                print(f"Vouchers in group '{args.group}':")
+                if isinstance(vouchers, list):
+                    if vouchers:
+                        for v in vouchers:
+                            print(
+                                f"  - User: {v.get('username')}  "
+                                f"State: {v.get('state')}  "
+                                f"Validity: {v.get('validity')}s "
+                                f"Expirytime: {v.get('expirytime')} "
+                                f"Starttime: {v.get('starttime')} "
+                            )
+                    else:
+                        print("  (No vouchers in this group.)")
+                else:
+                    print(f"Unexpected format for voucher list: {vouchers}")
+
+            except Exception as e:
+                print(f"Error listing vouchers in group '{args.group}': {e}", file=sys.stderr)
+                sys.exit(1)
+
+    # --------------------------------------------------------------------------
+    # SUBCOMMAND: create
+    # --------------------------------------------------------------------------
+    elif args.command == "create":
+        try:
+            validity_sec = parse_time_to_seconds(args.validity)
+            expiry_sec = parse_time_to_seconds(args.expiry)
+            result = api.create_vouchers(
+                group=args.group,
+                validity_seconds=validity_sec,
+                expiry_seconds=expiry_sec,
+                count=args.count
+            )
+            print(f"Successfully created {args.count} voucher(s) in group '{args.group}':\n")
+            if isinstance(result, list):
+                for idx, r in enumerate(result, start=1):
+                    print(f"{idx:2d}) username={r.get('username')}   password={r.get('password')}")
+            else:
+                print(f"Unexpected response format: {result}")
+        except Exception as e:
+            print(f"Error creating vouchers: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    # --------------------------------------------------------------------------
+    # SUBCOMMAND: delete
+    # --------------------------------------------------------------------------
+    elif args.command == "delete":
+        if args.username:
+            # Expire a single voucher
+            try:
+                result = api.expire_voucher(args.username)
+                print(f"Voucher '{args.username}' in group '{args.group}' has been expired.")
+                print(f"Response: {result}")
+            except Exception as e:
+                print(f"Error expiring voucher '{args.username}': {e}", file=sys.stderr)
+                sys.exit(1)
+
+        elif args.all_expired:
+            # Drop all expired vouchers
+            try:
+                result = api.drop_expired_vouchers(args.group)
+                print(f"Expired vouchers in group '{args.group}' have been deleted.")
+                print(f"Response: {result}")
+            except Exception as e:
+                print(f"Error deleting expired vouchers in group '{args.group}': {e}", file=sys.stderr)
+                sys.exit(1)
+
+        elif args.all:
+            # Drop the entire group
+            try:
+                result = api.drop_voucher_group(args.group)
+                print(f"The entire group '{args.group}' (including all vouchers) has been dropped.")
+                print(f"Response: {result}")
+            except Exception as e:
+                print(f"Error dropping group '{args.group}': {e}", file=sys.stderr)
+                sys.exit(1)
+
+        else:
+            print("Error: Please specify either --username <USER>, --all-expired or --all.", file=sys.stderr)
+            sys.exit(1)
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,23 @@
+[opnsense]
+api_key =
+api_secret =
+base_url = https://firewall.linuxmuster.lan/api
+verify_ssl = True
+ca_bundle =
+
+[school]
+name = default-school
+
+[aliases]
+sync_roles = True
+roles_prefix = ROLE_
+sync_rooms = True
+rooms_prefix = ROOM_
+sync_hwgroups = True
+hwgroups_prefix = HWGROUP_
+
+[wlan]
+kill_session = True
+
+[voucher]
+provider = Voucher
