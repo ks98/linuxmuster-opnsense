@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install lint tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends shellcheck pyflakes3
+      - name: Python syntax (py_compile)
+        run: |
+          python3 -m py_compile \
+            usr/lib/python3/dist-packages/linuxmusterOPNsense/*.py \
+            usr/sbin/opn-captive-voucher usr/sbin/opn-captive-sessions usr/sbin/opn-update-aliases \
+            var/lib/linuxmuster/hooks/device-import.post.d/opn-update-all-schools
+      - name: Pyflakes (static analysis, advisory)
+        run: |
+          pyflakes3 \
+            usr/lib/python3/dist-packages/linuxmusterOPNsense/*.py \
+            usr/sbin/opn-captive-voucher usr/sbin/opn-captive-sessions usr/sbin/opn-update-aliases \
+            var/lib/linuxmuster/hooks/device-import.post.d/opn-update-all-schools || true
+      - name: ShellCheck
+        run: |
+          shellcheck \
+            etc/linuxmuster/tools/hooks/group-manager/99_kill_wlan_sessions \
+            buildpackage.sh
+
+  build:
+    needs: lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends devscripts equivs fakeroot lintian
+          sudo mk-build-deps -i -r -t "apt-get -y --no-install-recommends" debian/control
+      - name: Build binary package
+        run: dpkg-buildpackage -us -uc -b
+      - name: Lintian (advisory)
+        run: lintian ../*.deb || true
+      - name: Collect artifacts
+        run: mkdir -p dist && cp ../*.deb dist/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-package
+          path: dist/*.deb
+          if-no-files-found: error

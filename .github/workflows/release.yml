@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify tag matches debian/changelog version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          deb="$(dpkg-parsechangelog -S Version)"
+          echo "Tag=$tag  Changelog=$deb"
+          if [ "$tag" != "$deb" ]; then
+            echo "::error::Tag ($tag) != debian/changelog version ($deb)"
+            exit 1
+          fi
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends devscripts equivs fakeroot lintian
+          sudo mk-build-deps -i -r -t "apt-get -y --no-install-recommends" debian/control
+
+      - name: Build binary package
+        run: dpkg-buildpackage -us -uc -b
+
+      - name: Lintian (advisory)
+        run: lintian ../*.deb || true
+
+      - name: Prepare artifacts + release notes
+        run: |
+          mkdir -p dist && cp ../*.deb dist/
+          dpkg-parsechangelog -S Changes | sed '1,/^\.$/d' > release-notes.md
+          cat release-notes.md
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.deb \
+            --title "linuxmuster-opnsense $GITHUB_REF_NAME" \
+            --notes-file release-notes.md
