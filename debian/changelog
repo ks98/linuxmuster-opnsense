@@ -1,3 +1,16 @@
+linuxmuster-opnsense (7.3.2) unstable; urgency=low
+
+  * Support syncing multiple schools onto one firewall:
+    - New per-school "school_prefix" ([aliases]) prepended to every alias name
+      so schools no longer collide on a shared firewall.
+    - Alias names that would exceed OPNsense's 32-char limit are shortened
+      deterministically with a short hash suffix instead of silently truncated.
+    - Aliases are stamped with an owner-school marker; an alias owned by a
+      different school is never overwritten (skipped with a warning and a
+      non-zero exit) to prevent silent data loss.
+
+ -- Kevin Stenzel <k.stenzel@fair-comp.de>  Tue, 07 Jul 2026 10:41:39 +0200
+
 linuxmuster-opnsense (7.3.1) unstable; urgency=low
 
   * Treat OPNsense HTTP 200 responses with result=failed as errors instead of

@@ -9,6 +9,10 @@ ca_bundle =
 name = default-school
 
 [aliases]
+# Prepended to every alias name of this school. Leave empty for a single
+# school. When syncing several schools onto ONE firewall, give each school a
+# distinct, short value (e.g. S1_, S2_) so their aliases do not collide.
+school_prefix =
 sync_roles = True
 roles_prefix = ROLE_
 sync_rooms = True

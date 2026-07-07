@@ -1,4 +1,5 @@
 import re
+import hashlib
 import requests
 import json
 from .config import SchoolConfig
@@ -26,16 +27,44 @@ ALIAS_MAX_LENGTH = 32
 
 def sanitize_alias_name(name, max_length=ALIAS_MAX_LENGTH):
     """
-    Converts an arbitrary name into a valid OPNsense alias name by replacing
-    any disallowed character with '_' and truncating to max_length.
+    Converts an arbitrary name into a valid OPNsense alias name: disallowed
+    characters become '_'. If the result exceeds max_length it is shortened
+    deterministically and a short hash suffix is appended, so that distinct
+    long names never collide (important when a per-school prefix pushes an
+    alias name over the 32 character limit).
     """
     sanitized = _ALIAS_INVALID_CHARS.sub('_', str(name))
-    return sanitized[:max_length]
+    if len(sanitized) <= max_length:
+        return sanitized
+    digest = hashlib.sha1(sanitized.encode('utf-8')).hexdigest()[:6]
+    keep = max_length - len(digest) - 1  # room for '_' + digest
+    return f"{sanitized[:keep]}_{digest}"
+
+
+def alias_owner_tag(school):
+    """Machine-readable owner marker embedded in an alias description so that
+    aliases managed for one school are never silently overwritten by another."""
+    return f"[linuxmuster-opnsense school={school}]"
+
+
+_ALIAS_OWNER_RE = re.compile(r"\[linuxmuster-opnsense school=([^\]]+)\]")
+
+
+def alias_owner_of(description):
+    """Returns the owning school parsed from an alias description, or None if
+    the description carries no linuxmuster-opnsense owner marker."""
+    match = _ALIAS_OWNER_RE.match(description or "")
+    return match.group(1) if match else None
 
 
 class OPNsenseAPIError(Exception):
     """Raised when the OPNsense API reports a logical failure (HTTP 200 but
     result == 'failed', e.g. a validation error)."""
+
+
+class AliasOwnershipConflict(Exception):
+    """Raised when an alias already exists and is owned by a different school,
+    so overwriting it would destroy that school's data."""
 
 class LinuxmusterOPNsenseAPI:
     """
@@ -112,9 +141,15 @@ class LinuxmusterOPNsenseAPI:
         """
         self._request("post", "firewall/alias/reconfigure", data={})
 
-    def create_or_update_alias(self, alias_name, ip_list, apply=True):
+    def create_or_update_alias(self, alias_name, ip_list, school=None, kind=None, apply=True):
         """
         Creates or updates an OPNsense alias with a given list of IP addresses.
+
+        When 'school' is given, the alias description is stamped with an owner
+        marker and an existing alias owned by a *different* school is never
+        overwritten (AliasOwnershipConflict is raised instead). This makes it
+        safe to sync several schools onto one firewall.
+
         When apply is True (default) a 'reconfigure' request is sent afterwards
         to apply the change immediately. Pass apply=False when updating many
         aliases in a loop and call apply_alias_changes() once at the end.
@@ -134,16 +169,34 @@ class LinuxmusterOPNsenseAPI:
         else:
             uuid = None
 
+        if school is not None:
+            description = f"{alias_owner_tag(school)} {kind or 'alias'}: {alias_name}"
+        else:
+            description = f"Alias for {alias_name}"
+
         alias_data = {
             "enabled": "1",
             "name": alias_name,
             "type": "host",
             # Join IPs with newline
             "content": "\n".join(ip_list),
-            "description": f"Alias for {alias_name}"
+            "description": description
         }
 
         if uuid:
+            # Before overwriting, make sure this alias isn't owned by another
+            # school (which would silently destroy that school's IP list).
+            if school is not None:
+                existing = self._request("get", f"firewall/alias/getItem/{uuid}")
+                existing_desc = ""
+                if isinstance(existing, dict) and isinstance(existing.get("alias"), dict):
+                    existing_desc = existing["alias"].get("description", "") or ""
+                owner = alias_owner_of(existing_desc)
+                if owner is not None and owner != school:
+                    raise AliasOwnershipConflict(
+                        f"Alias '{alias_name}' is owned by school '{owner}', not "
+                        f"'{school}' - skipped. Use a distinct school_prefix per school."
+                    )
             # Alias exists -> update
             self._request("post", f"firewall/alias/setItem/{uuid}", data={"alias": alias_data})
         else:
