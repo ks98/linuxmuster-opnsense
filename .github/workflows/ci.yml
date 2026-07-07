@@ -53,7 +53,7 @@ jobs:
         run: lintian ../*.deb || true
       - name: Collect artifacts
         run: mkdir -p dist && cp ../*.deb dist/
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: deb-package
           path: dist/*.deb
