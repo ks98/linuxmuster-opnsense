@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import sys
 import argparse
-from linuxmusterOPNsense.LinuxmusterOPNsenseAPI import LinuxmusterOPNsenseAPI
+from linuxmusterOPNsense.LinuxmusterOPNsenseAPI import LinuxmusterOPNsenseAPI, sanitize_alias_name
 from linuxmusterTools.devices.devices import Devices
 
 def main():
@@ -45,10 +45,10 @@ def main():
             roles = set(d.get('sophomorixRole') for d in all_devices if 'sophomorixRole' in d)
             for role in roles:
                 if role:
-                    alias_name = f"{school_conf.roles_prefix}{role}"
-                    ips = [x['ip'] for x in all_devices if x.get('sophomorixRole') == role and 'ip' in x]
+                    alias_name = sanitize_alias_name(f"{school_conf.roles_prefix}{role}")
+                    ips = [x['ip'] for x in all_devices if x.get('sophomorixRole') == role and x.get('ip')]
                     if ips:
-                        api.create_or_update_alias(alias_name, ips)
+                        api.create_or_update_alias(alias_name, ips, apply=False)
                         updated_aliases_count += 1
                         updated_roles.append(alias_name)
 
@@ -57,10 +57,10 @@ def main():
             rooms = set(d.get('room') for d in all_devices if 'room' in d)
             for room in rooms:
                 if room:
-                    alias_name = f"{school_conf.rooms_prefix}{room}"
-                    ips = [x['ip'] for x in all_devices if x.get('room') == room and 'ip' in x]
+                    alias_name = sanitize_alias_name(f"{school_conf.rooms_prefix}{room}")
+                    ips = [x['ip'] for x in all_devices if x.get('room') == room and x.get('ip')]
                     if ips:
-                        api.create_or_update_alias(alias_name, ips)
+                        api.create_or_update_alias(alias_name, ips, apply=False)
                         updated_aliases_count += 1
                         updated_rooms.append(alias_name)
 
@@ -69,12 +69,17 @@ def main():
             hwgroups = set(d.get('group') for d in all_devices if 'group' in d)
             for hwg in hwgroups:
                 if hwg:
-                    alias_name = f"{school_conf.hwgroups_prefix}{hwg}"
-                    ips = [x['ip'] for x in all_devices if x.get('group') == hwg and 'ip' in x]
+                    alias_name = sanitize_alias_name(f"{school_conf.hwgroups_prefix}{hwg}")
+                    ips = [x['ip'] for x in all_devices if x.get('group') == hwg and x.get('ip')]
                     if ips:
-                        api.create_or_update_alias(alias_name, ips)
+                        api.create_or_update_alias(alias_name, ips, apply=False)
                         updated_aliases_count += 1
                         updated_hwgroups.append(alias_name)
+
+        # Apply all alias changes with a single reconfigure instead of
+        # reconfiguring the firewall after every individual alias.
+        if updated_aliases_count > 0:
+            api.apply_alias_changes()
 
         # ----- Output -----
         if not args.quiet:

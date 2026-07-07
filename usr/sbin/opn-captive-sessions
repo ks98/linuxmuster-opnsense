@@ -24,12 +24,15 @@ def main():
         default=[],
         help="List of zone IDs to filter (e.g. --zone 0 1)"
     )
-    parser.add_argument(
+    # --kill-username and --kill-sessionid are mutually exclusive so passing
+    # both no longer silently ignores one of them.
+    kill_group = parser.add_mutually_exclusive_group()
+    kill_group.add_argument(
         "--kill-username",
         default="",
         help="Disconnect all sessions for this *exact* username."
     )
-    parser.add_argument(
+    kill_group.add_argument(
         "--kill-sessionid",
         default="",
         help="Disconnect a single session by sessionId."
