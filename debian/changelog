@@ -1,3 +1,22 @@
+linuxmuster-opnsense (7.3.1) unstable; urgency=low
+
+  * Treat OPNsense HTTP 200 responses with result=failed as errors instead of
+    silently reporting success.
+  * Sanitize alias names to the OPNsense-allowed character set so roles/rooms
+    with hyphens (e.g. classroom-studentcomputer) sync correctly.
+  * opn-update-all-schools: continue with the remaining schools when one fails.
+  * opn-update-aliases: skip devices without an IP and reconfigure only once
+    instead of after every alias.
+  * opn-captive-voucher: scope "delete --username" to the given group, make the
+    deletion modes mutually exclusive, reject negative time values, and report
+    the actual number of vouchers created.
+  * opn-captive-sessions: make --kill-username and --kill-sessionid mutually
+    exclusive.
+  * Handle PUT requests and guard delete_alias against non-dict API responses.
+  * Packaging: build with dh-python.
+
+ -- Kevin Stenzel <k.stenzel@fair-comp.de>  Tue, 07 Jul 2026 09:10:48 +0200
+
 linuxmuster-opnsense (7.3.0) unstable; urgency=low
 
   * Add HTTP request timeouts to avoid hanging hooks/CLI commands.
@@ -11,7 +30,7 @@ linuxmuster-opnsense (7.2.1) unstable; urgency=low
 
   * Hook script that automatically terminates OPNsense WLAN sessions when users are removed from the WIFI group.
 
- -- Kevin Stenzel <k.stenzel@fair-comp.de>  Thu, 30 Dec 2024 10:41:00 +0000
+ -- Kevin Stenzel <k.stenzel@fair-comp.de>  Mon, 30 Dec 2024 10:41:00 +0000
 
 
 linuxmuster-opnsense (7.2.0) unstable; urgency=low

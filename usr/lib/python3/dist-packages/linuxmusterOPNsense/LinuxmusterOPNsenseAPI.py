@@ -1,3 +1,4 @@
+import re
 import requests
 import json
 from .config import SchoolConfig
@@ -14,6 +15,27 @@ if SubjectAltNameWarning is not None:
     warnings.filterwarnings("ignore", category=SubjectAltNameWarning)
 
 DEFAULT_TIMEOUT = (5, 30)
+
+# OPNsense alias names may only contain [a-zA-Z0-9_] and are limited to 32
+# characters. Source names (e.g. sophomorix roles like
+# "classroom-studentcomputer") often contain hyphens or other characters that
+# OPNsense rejects, so they must be sanitized before use.
+_ALIAS_INVALID_CHARS = re.compile(r'[^a-zA-Z0-9_]')
+ALIAS_MAX_LENGTH = 32
+
+
+def sanitize_alias_name(name, max_length=ALIAS_MAX_LENGTH):
+    """
+    Converts an arbitrary name into a valid OPNsense alias name by replacing
+    any disallowed character with '_' and truncating to max_length.
+    """
+    sanitized = _ALIAS_INVALID_CHARS.sub('_', str(name))
+    return sanitized[:max_length]
+
+
+class OPNsenseAPIError(Exception):
+    """Raised when the OPNsense API reports a logical failure (HTTP 200 but
+    result == 'failed', e.g. a validation error)."""
 
 class LinuxmusterOPNsenseAPI:
     """
@@ -56,6 +78,8 @@ class LinuxmusterOPNsenseAPI:
             r = requests.get(url, auth=auth, verify=self.verify, params=params, timeout=self.timeout)
         elif method.lower() == 'post':
             r = requests.post(url, headers=headers, auth=auth, verify=self.verify, json=data, timeout=self.timeout)
+        elif method.lower() == 'put':
+            r = requests.put(url, headers=headers, auth=auth, verify=self.verify, json=data, timeout=self.timeout)
         elif method.lower() == 'delete':
             r = requests.delete(url, headers=headers, auth=auth, verify=self.verify, json=data, timeout=self.timeout)
         else:
@@ -65,15 +89,40 @@ class LinuxmusterOPNsenseAPI:
             r.raise_for_status()
 
         try:
-            return r.json() if r.text else {}
+            result = r.json() if r.text else {}
         except json.JSONDecodeError:
             return {}
 
-    def create_or_update_alias(self, alias_name, ip_list):
+        # OPNsense frequently answers logical failures (e.g. validation errors on
+        # addItem/setItem) with HTTP 200 and {"result": "failed", ...}. A pure
+        # status-code check would treat these as success, so inspect the body.
+        if isinstance(result, dict) and result.get("result") == "failed":
+            raise OPNsenseAPIError(
+                f"OPNsense API reported failure for {method.upper()} {endpoint}: "
+                f"{result.get('validations', result)}"
+            )
+
+        return result
+
+    def apply_alias_changes(self):
         """
-        Creates or updates an OPNsense alias with a given list of IP addresses. 
-        After creation or update, a 'reconfigure' request is sent to apply changes.
+        Sends a single 'reconfigure' request so that pending alias changes take
+        effect. Call this once after a batch of create/update/delete operations
+        instead of reconfiguring after every single alias.
         """
+        self._request("post", "firewall/alias/reconfigure", data={})
+
+    def create_or_update_alias(self, alias_name, ip_list, apply=True):
+        """
+        Creates or updates an OPNsense alias with a given list of IP addresses.
+        When apply is True (default) a 'reconfigure' request is sent afterwards
+        to apply the change immediately. Pass apply=False when updating many
+        aliases in a loop and call apply_alias_changes() once at the end.
+        """
+        # OPNsense rejects names with characters outside [a-zA-Z0-9_] (HTTP 200 +
+        # result=failed), so sanitize before both lookup and write.
+        alias_name = sanitize_alias_name(alias_name)
+
         # Check if alias already exists
         safe_alias_name = self._encode_path_segment(alias_name)
         uuid_data = self._request("get", f"firewall/alias/getAliasUUID/{safe_alias_name}")
@@ -101,20 +150,24 @@ class LinuxmusterOPNsenseAPI:
             # Alias does not exist -> create
             self._request("post", "firewall/alias/addItem", data={"alias": alias_data})
 
-        # Reconfigure to apply changes
-        self._request("post", "firewall/alias/reconfigure", data={})
+        if apply:
+            self.apply_alias_changes()
 
-    def delete_alias(self, alias_name):
+    def delete_alias(self, alias_name, apply=True):
         """
         Deletes an existing alias by name. Returns True if alias was found and deleted,
         otherwise False.
         """
+        alias_name = sanitize_alias_name(alias_name)
         safe_alias_name = self._encode_path_segment(alias_name)
         uuid_data = self._request("get", f"firewall/alias/getAliasUUID/{safe_alias_name}")
-        uuid = uuid_data.get('uuid', None)
+        # getAliasUUID returns a list (not a dict) when the alias does not exist,
+        # so guard against calling .get() on a non-dict.
+        uuid = uuid_data.get('uuid') if isinstance(uuid_data, dict) else None
         if uuid:
             self._request("post", f"firewall/alias/delItem/{uuid}")
-            self._request("post", "firewall/alias/reconfigure")
+            if apply:
+                self.apply_alias_changes()
             return True
         return False
 

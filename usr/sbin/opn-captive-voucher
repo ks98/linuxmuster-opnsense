@@ -6,26 +6,30 @@ from linuxmusterOPNsense.LinuxmusterOPNsenseAPI import LinuxmusterOPNsenseAPI
 def parse_time_to_seconds(timestr):
     """
     Converts a time argument (e.g. '4h', '1d', '24h', '0', 'never', 'none') into seconds.
-    Raises a ValueError if the format is invalid.
+    A bare number is interpreted as hours (e.g. '4' == '4h').
+    Raises a ValueError if the format is invalid or the value is negative.
     """
     timestr = timestr.lower().strip()
     if timestr in ("0", "never", "none"):
         return 0
     if timestr.endswith('d'):
         try:
-            days = int(timestr[:-1])
-            return days * 24 * 3600
+            seconds = int(timestr[:-1]) * 24 * 3600
         except ValueError:
             raise ValueError(f"Invalid time format: {timestr}")
-    if timestr.endswith('h'):
+    elif timestr.endswith('h'):
         try:
-            hours = int(timestr[:-1])
-            return hours * 3600
+            seconds = int(timestr[:-1]) * 3600
         except ValueError:
             raise ValueError(f"Invalid time format: {timestr}")
-    if timestr.isdigit():
-        return int(timestr) * 3600
-    raise ValueError(f"Unknown time format: {timestr}")
+    elif timestr.isdigit():
+        seconds = int(timestr) * 3600
+    else:
+        raise ValueError(f"Unknown time format: {timestr}")
+
+    if seconds < 0:
+        raise ValueError(f"Time value must not be negative: {timestr}")
+    return seconds
 
 def main():
     parser = argparse.ArgumentParser(
@@ -83,16 +87,19 @@ def main():
         help="Deletes (expires/drops) one or more vouchers or entire groups."
     )
     delete_parser.add_argument("group", help="Name of the voucher group.")
-    delete_parser.add_argument(
+    # Exactly one deletion mode must be chosen; they are mutually exclusive so
+    # combining them can no longer silently ignore one of the flags.
+    delete_mode = delete_parser.add_mutually_exclusive_group(required=True)
+    delete_mode.add_argument(
         "--username",
-        help="Expire a single voucher by username."
+        help="Expire a single voucher (which must be in GROUP) by username."
     )
-    delete_parser.add_argument(
+    delete_mode.add_argument(
         "--all-expired",
         action="store_true",
         help="Delete all expired vouchers in this group."
     )
-    delete_parser.add_argument(
+    delete_mode.add_argument(
         "--all",
         action="store_true",
         help="Drop the entire group (including all vouchers)."
@@ -165,8 +172,10 @@ def main():
                 expiry_seconds=expiry_sec,
                 count=args.count
             )
-            print(f"Successfully created {args.count} voucher(s) in group '{args.group}':\n")
+            # Report the number of vouchers the API actually returned, not the
+            # number requested, so partial/failed responses aren't misreported.
             if isinstance(result, list):
+                print(f"Successfully created {len(result)} voucher(s) in group '{args.group}':\n")
                 for idx, r in enumerate(result, start=1):
                     print(f"{idx:2d}) username={r.get('username')}   password={r.get('password')}")
             else:
@@ -180,7 +189,25 @@ def main():
     # --------------------------------------------------------------------------
     elif args.command == "delete":
         if args.username:
-            # Expire a single voucher
+            # expire_voucher operates provider-wide, so first confirm the voucher
+            # actually belongs to the requested group. Otherwise the group
+            # argument would be silently ignored and a voucher from a different
+            # group could be expired.
+            try:
+                vouchers = api.list_vouchers_in_group(args.group)
+            except Exception as e:
+                print(f"Error looking up group '{args.group}': {e}", file=sys.stderr)
+                sys.exit(1)
+
+            usernames = [v.get('username') for v in vouchers] if isinstance(vouchers, list) else []
+            if args.username not in usernames:
+                print(
+                    f"Error: voucher '{args.username}' was not found in group '{args.group}'.",
+                    file=sys.stderr,
+                )
+                sys.exit(1)
+
+            # Expire the single voucher
             try:
                 result = api.expire_voucher(args.username)
                 print(f"Voucher '{args.username}' in group '{args.group}' has been expired.")
