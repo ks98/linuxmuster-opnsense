@@ -36,6 +36,7 @@ Dieses Projekt stellt eine Sammlung von Integrationstools für die Anbindung von
      - `name`: Anzeigename der Schule (wird für Geräte-Filterung, Ausgaben usw. genutzt)  
 
    - **[aliases]**  
+     - `school_prefix`: Wird jedem Aliasnamen dieser Schule vorangestellt (Standard: leer). Bei mehreren Schulen auf **einer** Firewall pro Schule einen eigenen, kurzen Wert setzen (z. B. `S1_`, `S2_`), damit sich die Aliase nicht überschreiben. Siehe Abschnitt „Mehrere Schulen auf einer Firewall".  
      - `sync_roles`: Legt fest, ob Rollen (z. B. Schüler, Lehrer etc.) synchronisiert werden sollen  
      - `roles_prefix`: Prefix für Rollen-Aliasnamen (z. B. `ROLE_`)  
      - `sync_rooms`: Legt fest, ob Räume synchronisiert werden sollen  
@@ -47,7 +48,37 @@ Dieses Projekt stellt eine Sammlung von Integrationstools für die Anbindung von
      - `provider`: Name des Voucher-Providers im OPNsense Captive Portal (Standard: `Voucher`)  
 
 3. **Mehrere Schulen**  
-   - Sie können mehrere `.ini`-Dateien anlegen (z. B. `default-school.ini`, `schule-2.ini`) und damit Skripte für verschiedene Einrichtungen ausführen.  
+   - Sie können mehrere `.ini`-Dateien anlegen (z. B. `default-school.ini`, `schule-2.ini`) und damit Skripte für verschiedene Einrichtungen ausführen. Jede `.ini` ist vollständig unabhängig: eigene OPNsense-Zugangsdaten/`base_url`, eigener `[school] name` (bestimmt, welche linuxmuster-Schule bzw. deren `devices.csv` gelesen wird) und eigene Prefixe.  
+
+### Mehrere Schulen auf einer Firewall
+
+Wenn mehrere Schulen auf **dieselbe** OPNsense-Firewall synchronisiert werden sollen, ist zu beachten: Rollennamen wie `classroom-studentcomputer` heißen an **jeder** Schule gleich, und auch Raum-/Gruppennamen können sich überschneiden. Ohne Unterscheidung würde die zuletzt laufende Schule die Aliase der anderen überschreiben.
+
+**Lösung:** In jeder `.ini` einen eigenen `school_prefix` setzen und alle `.ini` auf dieselbe `base_url` zeigen lassen.
+
+```ini
+# schule1.ini
+[opnsense]
+base_url = https://firewall.example.org/api
+api_key = ...
+api_secret = ...
+[school]
+name = schule1
+[aliases]
+school_prefix = S1_
+roles_prefix = R_
+rooms_prefix = RM_
+hwgroups_prefix = HG_
+sync_roles = True
+sync_rooms = True
+sync_hwgroups = True
+```
+
+Die zweite Schule (`schule2.ini`) ist identisch, nur mit `name = schule2` und `school_prefix = S2_`. Ergebnis auf der Firewall: getrennte Aliase `S1_R_classroom_studentcomputer`, `S2_R_classroom_studentcomputer`, `S1_RM_101`, `S2_RM_101`, … — pro Schule adressierbar.
+
+**Wichtig / gut zu wissen:**
+- OPNsense-Aliasnamen dürfen max. **32 Zeichen** lang sein und nur `a-z A-Z 0-9 _` enthalten. Halten Sie `school_prefix` + Kategorie-Prefix **kurz** (z. B. `S1_` + `R_`), damit lange Rollennamen (bis 25 Zeichen) darunter bleiben und lesbar sind. Wird ein Name doch zu lang, kürzt das Tool ihn automatisch und hängt einen kurzen Hash an (eindeutig, aber weniger lesbar).
+- **Schutz gegen versehentliches Überschreiben:** Jeder verwaltete Alias wird intern mit der Eigentümer-Schule markiert (im Beschreibungsfeld). Versucht eine Schule, den Alias einer **anderen** Schule zu überschreiben (z. B. weil versehentlich derselbe `school_prefix` gesetzt ist), wird dieser Alias übersprungen, eine Warnung ausgegeben und der Lauf endet mit Fehlercode — es gehen keine Daten still verloren.  
 
 
 ## Nutzung der Skripte

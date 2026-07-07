@@ -44,6 +44,13 @@ class SchoolConfig:
         return self.config.get('school', 'name', fallback=self.school_name)
 
     @property
+    def school_prefix(self):
+        # Prepended to every alias name of this school. Use a distinct value per
+        # school when syncing several schools onto the same firewall so their
+        # aliases (e.g. ROLE_classroom-studentcomputer) do not collide.
+        return self.config.get('aliases', 'school_prefix', fallback='')
+
+    @property
     def sync_roles(self):
         return self.config.getboolean('aliases', 'sync_roles', fallback=False)
 

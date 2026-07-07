@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import sys
 import argparse
-from linuxmusterOPNsense.LinuxmusterOPNsenseAPI import LinuxmusterOPNsenseAPI, sanitize_alias_name
+from linuxmusterOPNsense.LinuxmusterOPNsenseAPI import (
+    LinuxmusterOPNsenseAPI, sanitize_alias_name, AliasOwnershipConflict,
+)
 from linuxmusterTools.devices.devices import Devices
 
 def main():
@@ -38,6 +40,23 @@ def main():
         updated_roles = []
         updated_rooms = []
         updated_hwgroups = []
+        skipped = []
+
+        def sync_alias(kind, alias_name, ips, bucket):
+            """Create/update one alias for this school. On an ownership conflict
+            (the alias already belongs to another school) record it and keep
+            going instead of aborting the whole run."""
+            try:
+                api.create_or_update_alias(
+                    alias_name, ips,
+                    school=school_conf.school_name_conf, kind=kind, apply=False,
+                )
+                bucket.append(alias_name)
+                return True
+            except AliasOwnershipConflict as exc:
+                print(f"WARNING: {exc}", file=sys.stderr)
+                skipped.append(alias_name)
+                return False
 
         # ----- Roles Aliases -----
         # Check if role synchronization is enabled
@@ -45,36 +64,33 @@ def main():
             roles = set(d.get('sophomorixRole') for d in all_devices if 'sophomorixRole' in d)
             for role in roles:
                 if role:
-                    alias_name = sanitize_alias_name(f"{school_conf.roles_prefix}{role}")
+                    alias_name = sanitize_alias_name(
+                        f"{school_conf.school_prefix}{school_conf.roles_prefix}{role}")
                     ips = [x['ip'] for x in all_devices if x.get('sophomorixRole') == role and x.get('ip')]
-                    if ips:
-                        api.create_or_update_alias(alias_name, ips, apply=False)
+                    if ips and sync_alias('role', alias_name, ips, updated_roles):
                         updated_aliases_count += 1
-                        updated_roles.append(alias_name)
 
         # ----- Rooms Aliases -----
         if school_conf.sync_rooms:
             rooms = set(d.get('room') for d in all_devices if 'room' in d)
             for room in rooms:
                 if room:
-                    alias_name = sanitize_alias_name(f"{school_conf.rooms_prefix}{room}")
+                    alias_name = sanitize_alias_name(
+                        f"{school_conf.school_prefix}{school_conf.rooms_prefix}{room}")
                     ips = [x['ip'] for x in all_devices if x.get('room') == room and x.get('ip')]
-                    if ips:
-                        api.create_or_update_alias(alias_name, ips, apply=False)
+                    if ips and sync_alias('room', alias_name, ips, updated_rooms):
                         updated_aliases_count += 1
-                        updated_rooms.append(alias_name)
 
         # ----- Hardware Groups Aliases -----
         if school_conf.sync_hwgroups:
             hwgroups = set(d.get('group') for d in all_devices if 'group' in d)
             for hwg in hwgroups:
                 if hwg:
-                    alias_name = sanitize_alias_name(f"{school_conf.hwgroups_prefix}{hwg}")
+                    alias_name = sanitize_alias_name(
+                        f"{school_conf.school_prefix}{school_conf.hwgroups_prefix}{hwg}")
                     ips = [x['ip'] for x in all_devices if x.get('group') == hwg and x.get('ip')]
-                    if ips:
-                        api.create_or_update_alias(alias_name, ips, apply=False)
+                    if ips and sync_alias('hwgroup', alias_name, ips, updated_hwgroups):
                         updated_aliases_count += 1
-                        updated_hwgroups.append(alias_name)
 
         # Apply all alias changes with a single reconfigure instead of
         # reconfiguring the firewall after every individual alias.
@@ -107,8 +123,21 @@ def main():
 
             print("")
             print(f"Total updated aliases: {updated_aliases_count}")
-            print(f"All configured aliases have been successfully updated for '{args.school}'.")
+            if skipped:
+                print(f"Skipped (ownership conflict): {len(skipped)}")
+            else:
+                print(f"All configured aliases have been successfully updated for '{args.school}'.")
             print("")
+
+        # Signal partial failure (exit != 0) so opn-update-all-schools flags this
+        # school while still syncing the others. Runs even in --quiet mode.
+        if skipped:
+            print(
+                f"WARNING: {len(skipped)} alias(es) skipped because another school "
+                f"owns them: {', '.join(skipped)}",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     except Exception as e:
         # Always print errors
