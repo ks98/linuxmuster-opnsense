@@ -1,11 +1,30 @@
 Source: linuxmuster-opnsense
 Section: admin
 Priority: optional
-Maintainer: Kevin Stenzel <k.stenzel@fair-comp.de>
+Maintainer: Kevin Stenzel <mail@kevin-stenzel.de>
 Build-Depends: debhelper-compat (= 13), dh-python, python3
-Standards-Version: 4.5.0
+Standards-Version: 4.6.2
+Rules-Requires-Root: no
+Homepage: https://github.com/faircomp/linuxmuster-opnsense
 
 Package: linuxmuster-opnsense
 Architecture: all
-Depends: python3, python3-requests, linuxmuster-tools7, ${misc:Depends}, ${python3:Depends}
-Description: Integrationstools für linuxmuster.net und OPNsense
+Depends: ${misc:Depends},
+         ${python3:Depends},
+         python3,
+         python3-requests,
+         linuxmuster-tools7 (>= 7.3),
+         linuxmuster-tools7 (<< 7.4)
+Description: OPNsense integration tools for linuxmuster.net 7.3
+ Command-line tools and hooks that connect a linuxmuster.net 7.3 server to
+ an OPNsense firewall through its REST API:
+  * opn-update-aliases syncs roles, rooms and hardware groups from the
+    linuxmuster device inventory to OPNsense firewall aliases; a
+    device-import hook runs it for every configured school.
+  * opn-captive-voucher creates, lists and deletes captive portal vouchers.
+  * opn-captive-sessions lists and disconnects captive portal sessions; a
+    group-manager hook ends the WLAN sessions of users removed from the
+    wifi group.
+ .
+ Each school is configured in /etc/linuxmuster/opnsense/<school>.ini, so
+ several schools can share one firewall.

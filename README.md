@@ -9,6 +9,16 @@ Dieses Projekt stellt eine Sammlung von Integrationstools für die Anbindung von
 
 ## Installation
 
+Das Paket wird auf dem linuxmuster.net-Server (7.3, Ubuntu 24.04) installiert;
+`linuxmuster-tools7` ist dort bereits vorhanden.
+
+```bash
+# .deb aus dem GitHub-Release holen, dann auf dem Server:
+apt install ./linuxmuster-opnsense_7.3.3_all.deb
+```
+
+Selbst bauen: `make deb` im Quellverzeichnis (benötigt `build-essential`, `debhelper`
+und `dh-python`); das `.deb` liegt danach eine Ebene über dem Quellverzeichnis.
 
 ## Erste Schritte & Konfiguration
 

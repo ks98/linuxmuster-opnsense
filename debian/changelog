@@ -1,3 +1,29 @@
+linuxmuster-opnsense (7.3.3) lmn73; urgency=medium
+
+  * Switch the changelog distribution from unstable to lmn73: the version
+    scheme is 7.<line>.<n> and the distribution names the linuxmuster.net
+    line the package is built for (faircomp package conventions).
+  * Declare the linuxmuster line in Depends: linuxmuster-tools7 (>= 7.3),
+    linuxmuster-tools7 (<< 7.4). opn-update-aliases imports
+    linuxmusterTools.devices, and the hooks live in the hook directories of
+    linuxmuster-tools7 (group-manager) and linuxmuster-base7 (device import).
+  * Packaging: source format 3.0 (native), Rules-Requires-Root: no,
+    Standards-Version 4.6.2, Homepage, English package description,
+    debian/copyright and LICENSE (GPL-3.0-or-later), .gitignore for build
+    artifacts.
+  * Build with "make deb" (dpkg-buildpackage -us -uc -tc) instead of
+    buildpackage.sh; debian/rules keeps debhelper away from the wrapper
+    Makefile.
+  * CI: fast tier (py_compile, ruff, shellcheck), package build in the
+    lmndev-runner container chosen by the changelog distribution, install
+    smoke on Ubuntu 24.04; release workflow with the tag == changelog gate,
+    prerelease for -rc tags, .deb and .changes attached to the release.
+  * Unify the maintainer address to Kevin Stenzel <mail@kevin-stenzel.de>.
+  * Rename readme.md to README.md and document the installation.
+  * No functional changes since 7.3.2.
+
+ -- Kevin Stenzel <mail@kevin-stenzel.de>  Fri, 18 Sep 2026 10:00:00 +0200
+
 linuxmuster-opnsense (7.3.2) unstable; urgency=low
 
   * Support syncing multiple schools onto one firewall:

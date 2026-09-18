@@ -1,0 +1,23 @@
+# debhelper build artefacts
+debian/.debhelper/
+debian/files
+debian/debhelper-build-stamp
+debian/linuxmuster-opnsense/
+debian/*.substvars
+debian/*.log
+debian/*.debhelper
+
+# dpkg-buildpackage writes these one level above the source tree, but keep the
+# patterns here in case anyone builds with a different layout.
+*.deb
+*.buildinfo
+*.changes
+*.tar.xz
+*.dsc
+
+# Python bytecode from local syntax checks
+__pycache__/
+*.pyc
+
+# desktop metadata
+.directory
