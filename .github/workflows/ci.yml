@@ -10,10 +10,11 @@ name: ci
 on:
   push:
     branches: ['**']
+    tags: ['v[0-9]*']       # the sanity checks run for releases too (release.yml only gates/builds)
   pull_request:
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -73,8 +74,8 @@ jobs:
           apt-get update -qq && apt-get build-dep -y -qq . 2>/dev/null || true
           make deb
           mkdir -p output && mv ../*.deb ../*.changes ../*.buildinfo output/
-      - name: Lintian (advisory)
-        run: lintian output/*.deb || true
+      - name: Lintian (errors fail the build, warnings are advisory)
+        run: lintian --fail-on error output/*.deb
       - uses: actions/upload-artifact@v4
         with:
           name: packages
@@ -108,8 +109,14 @@ jobs:
           opn-captive-sessions --help
           # library installed and importable (dh_python3 byte-compiled it)
           python3 -c 'from linuxmusterOPNsense.LinuxmusterOPNsenseAPI import sanitize_alias_name as s; assert s("classroom-studentcomputer") == "classroom_studentcomputer"'
-          # a missing school configuration is a clean error, not a traceback
-          ! opn-captive-voucher --school nonexistent list
+          # a missing school configuration is a clean error (exit 1, no traceback).
+          # `! cmd` would be a no-op under set -e, so test the exit status explicitly.
+          if opn-captive-voucher --school nonexistent list 2>err.log; then
+            echo "::error::expected a clean failure for a missing school configuration"; exit 1
+          fi
+          cat err.log
+          grep -q "was not found" err.log
+          if grep -q Traceback err.log; then echo "::error::traceback instead of a clean error"; exit 1; fi
           test -x /var/lib/linuxmuster/hooks/device-import.post.d/opn-update-all-schools
           test -x /etc/linuxmuster/tools/hooks/group-manager/99_kill_wlan_sessions
           test -f /etc/linuxmuster/opnsense/default-school.ini.default

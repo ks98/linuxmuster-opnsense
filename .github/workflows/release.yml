@@ -69,7 +69,14 @@ jobs:
           opn-captive-voucher --help
           opn-captive-sessions --help
           python3 -c 'from linuxmusterOPNsense.LinuxmusterOPNsenseAPI import sanitize_alias_name as s; assert s("classroom-studentcomputer") == "classroom_studentcomputer"'
-          ! opn-captive-voucher --school nonexistent list
+          # a missing school configuration is a clean error (exit 1, no traceback).
+          # `! cmd` would be a no-op under set -e, so test the exit status explicitly.
+          if opn-captive-voucher --school nonexistent list 2>err.log; then
+            echo "::error::expected a clean failure for a missing school configuration"; exit 1
+          fi
+          cat err.log
+          grep -q "was not found" err.log
+          if grep -q Traceback err.log; then echo "::error::traceback instead of a clean error"; exit 1; fi
           test -x /var/lib/linuxmuster/hooks/device-import.post.d/opn-update-all-schools
           test -x /etc/linuxmuster/tools/hooks/group-manager/99_kill_wlan_sessions
 
