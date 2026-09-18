@@ -1,60 +1,122 @@
-name: CI
+# SPDX-FileCopyrightText: Kevin Stenzel
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# From linuxmusterDEV/templates/ci.yml. Three jobs on every push/PR: fast tier
+# (syntax, lint, shellcheck), package build in the same container upstream CI
+# uses (proves it builds on the target Ubuntu/Python), install smoke on
+# ubuntu-24.04.
+name: ci
 
 on:
   push:
-    branches: [main]
+    branches: ['**']
+    tags: ['v[0-9]*']       # the sanity checks run for releases too (release.yml only gates/builds)
   pull_request:
-    branches: [main]
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-jobs:
-  lint:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v5
-      - name: Install lint tools
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends shellcheck pyflakes3
-      - name: Python syntax (py_compile)
-        run: |
-          python3 -m py_compile \
-            usr/lib/python3/dist-packages/linuxmusterOPNsense/*.py \
-            usr/sbin/opn-captive-voucher usr/sbin/opn-captive-sessions usr/sbin/opn-update-aliases \
-            var/lib/linuxmuster/hooks/device-import.post.d/opn-update-all-schools
-      - name: Pyflakes (static analysis, advisory)
-        run: |
-          pyflakes3 \
-            usr/lib/python3/dist-packages/linuxmusterOPNsense/*.py \
-            usr/sbin/opn-captive-voucher usr/sbin/opn-captive-sessions usr/sbin/opn-update-aliases \
-            var/lib/linuxmuster/hooks/device-import.post.d/opn-update-all-schools || true
-      - name: ShellCheck
-        run: |
-          shellcheck \
-            etc/linuxmuster/tools/hooks/group-manager/99_kill_wlan_sessions \
-            buildpackage.sh
+env:
+  # The CLIs and the hook have no .py extension, so every tool gets the list.
+  PY_FILES: >-
+    usr/lib/python3/dist-packages/linuxmusterOPNsense/__init__.py
+    usr/lib/python3/dist-packages/linuxmusterOPNsense/config.py
+    usr/lib/python3/dist-packages/linuxmusterOPNsense/LinuxmusterOPNsenseAPI.py
+    usr/sbin/opn-captive-voucher
+    usr/sbin/opn-captive-sessions
+    usr/sbin/opn-update-aliases
+    var/lib/linuxmuster/hooks/device-import.post.d/opn-update-all-schools
 
-  build:
-    needs: lint
-    runs-on: ubuntu-24.04
+jobs:
+  fast:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: Install build deps
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"        # = Ubuntu 24.04 / lmn73
+      # >>> fast tier of this repo (pinned tool versions, Renovate/Dependabot bump them) <<<
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq --no-install-recommends shellcheck
+      - run: pip install ruff==0.15.21
+      - name: Python syntax (py_compile)
+        run: python3 -m py_compile $PY_FILES
+      - name: ruff (default rule set = pyflakes + pycodestyle errors)
+        run: ruff check $PY_FILES
+      - name: ShellCheck
+        run: shellcheck etc/linuxmuster/tools/hooks/group-manager/99_kill_wlan_sessions
+      # <<<
+
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+      version: ${{ steps.image.outputs.version }}
+    steps:
+      - uses: actions/checkout@v5
+      - id: image
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends devscripts equivs fakeroot lintian
-          sudo mk-build-deps -i -r -t "apt-get -y --no-install-recommends" debian/control
-      - name: Build binary package
-        run: dpkg-buildpackage -us -uc -b
-      - name: Lintian (advisory)
-        run: lintian ../*.deb || true
-      - name: Collect artifacts
-        run: mkdir -p dist && cp ../*.deb dist/
+          DIST=$(dpkg-parsechangelog -S Distribution); NUM="${DIST#lmn}"
+          if [ "${NUM:-0}" -ge 74 ] 2>/dev/null; then IMG=ghcr.io/linuxmuster/lmndev-runner:latest; else IMG=ghcr.io/linuxmuster/lmndev-runner:24.04; fi
+          echo "image=$IMG" >> "$GITHUB_OUTPUT"
+          echo "version=$(dpkg-parsechangelog -S Version)" >> "$GITHUB_OUTPUT"
+
+  package:
+    needs: resolve
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.resolve.outputs.image }}
+      options: --user root
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build package (make deb wraps dpkg-buildpackage)
+        run: |
+          apt-get update -qq && apt-get build-dep -y -qq . 2>/dev/null || true
+          make deb
+          mkdir -p output && mv ../*.deb ../*.changes ../*.buildinfo output/
+      - name: Lintian (errors fail the build, warnings are advisory)
+        run: lintian --fail-on error output/*.deb
       - uses: actions/upload-artifact@v4
         with:
-          name: deb-package
-          path: dist/*.deb
+          name: packages
+          path: output/
           if-no-files-found: error
+
+  install-smoke:
+    needs: package
+    runs-on: ubuntu-24.04              # the target OS
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: packages/
+      - name: Install and use the package like an admin would
+        run: |
+          set -eux
+          sudo apt-get update -qq
+          # linuxmuster-tools7 comes from the lmn73 archive and depends on
+          # sophomorix-samba (a Samba AD DC), which cannot be installed on a
+          # plain runner. Install the Ubuntu dependencies via apt and let dpkg
+          # ignore only that one dependency. opn-update-aliases is the one CLI
+          # that imports linuxmusterTools, so it is checked for presence only;
+          # the other two CLIs and the library are exercised.
+          sudo apt-get install -y --no-install-recommends python3 python3-requests
+          sudo dpkg -i --ignore-depends=linuxmuster-tools7 ./packages/*.deb
+          for cli in opn-captive-voucher opn-captive-sessions opn-update-aliases; do
+            test "$(command -v "$cli")" = "/usr/sbin/$cli"
+          done
+          opn-captive-voucher --help
+          opn-captive-sessions --help
+          # library installed and importable (dh_python3 byte-compiled it)
+          python3 -c 'from linuxmusterOPNsense.LinuxmusterOPNsenseAPI import sanitize_alias_name as s; assert s("classroom-studentcomputer") == "classroom_studentcomputer"'
+          # a missing school configuration is a clean error (exit 1, no traceback).
+          # `! cmd` would be a no-op under set -e, so test the exit status explicitly.
+          if opn-captive-voucher --school nonexistent list 2>err.log; then
+            echo "::error::expected a clean failure for a missing school configuration"; exit 1
+          fi
+          cat err.log
+          grep -q "was not found" err.log
+          if grep -q Traceback err.log; then echo "::error::traceback instead of a clean error"; exit 1; fi
+          test -x /var/lib/linuxmuster/hooks/device-import.post.d/opn-update-all-schools
+          test -x /etc/linuxmuster/tools/hooks/group-manager/99_kill_wlan_sessions
+          test -f /etc/linuxmuster/opnsense/default-school.ini.default

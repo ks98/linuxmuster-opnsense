@@ -1,5 +1,20 @@
 #!/usr/bin/make -f
+# Build rules for linuxmuster-opnsense.
+#
+# Architecture-independent package: a Python module, three CLIs, two hooks and
+# a configuration template, installed via debian/linuxmuster-opnsense.install
+# and byte-compiled by dh_python3.
 export DH_VERBOSE=1
 
 %:
 	dh $@ --with python3
+
+# The Makefile in the source root only wraps dpkg-buildpackage, it does not
+# build anything. Keep debhelper from auto-detecting and invoking it.
+override_dh_auto_build:
+
+override_dh_auto_test:
+
+override_dh_auto_install:
+
+override_dh_auto_clean:

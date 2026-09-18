@@ -1,50 +1,101 @@
-name: Release
+# SPDX-FileCopyrightText: Kevin Stenzel
+# SPDX-License-Identifier: GPL-3.0-or-later
+#
+# From linuxmusterDEV/templates/release.yml, modeled on
+# lmndev-runner/workflows/*.release.yml: version and distribution come from the
+# first line of debian/changelog; the tag must match it. No publish job yet
+# (no faircomp/deb archive); add the upstream publish job when it exists.
+name: release
 
 on:
   push:
-    tags: ['v*']
-
-permissions:
-  contents: write
+    tags: ['v[0-9]*']
+  workflow_dispatch:
 
 jobs:
-  release:
-    runs-on: ubuntu-24.04
+  gate:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+      version: ${{ steps.meta.outputs.version }}
     steps:
       - uses: actions/checkout@v5
-
-      - name: Verify tag matches debian/changelog version
+      - id: meta
         run: |
-          tag="${GITHUB_REF_NAME#v}"
-          deb="$(dpkg-parsechangelog -S Version)"
-          echo "Tag=$tag  Changelog=$deb"
-          if [ "$tag" != "$deb" ]; then
-            echo "::error::Tag ($tag) != debian/changelog version ($deb)"
-            exit 1
+          VERSION=$(dpkg-parsechangelog -S Version)
+          DIST=$(dpkg-parsechangelog -S Distribution); NUM="${DIST#lmn}"
+          TAGVER="${GITHUB_REF_NAME#v}"; TAGVER="${TAGVER//-rc/~rc}"   # v7.3.1-rc1 -> 7.3.1~rc1
+          if [ "$GITHUB_REF_TYPE" = tag ] && [ "$TAGVER" != "$VERSION" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match debian/changelog version $VERSION"; exit 1; fi
+          if [ "${NUM:-0}" -ge 74 ] 2>/dev/null; then IMG=ghcr.io/linuxmuster/lmndev-runner:latest; else IMG=ghcr.io/linuxmuster/lmndev-runner:24.04; fi
+          echo "image=$IMG" >> "$GITHUB_OUTPUT"; echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: gate
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ needs.gate.outputs.image }}
+      options: --user root
+    steps:
+      - uses: actions/checkout@v5
+      - run: |
+          apt-get update -qq && apt-get build-dep -y -qq . 2>/dev/null || true
+          make deb
+          mkdir -p output && mv ../*.deb ../*.changes ../*.buildinfo output/
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: output/
+          if-no-files-found: error
+
+  install-smoke:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: packages/
+      - run: |
+          set -eux
+          sudo apt-get update -qq
+          # Same as ci.yml: linuxmuster-tools7 needs a Samba AD DC and is the
+          # only dependency dpkg is told to ignore here.
+          sudo apt-get install -y --no-install-recommends python3 python3-requests
+          sudo dpkg -i --ignore-depends=linuxmuster-tools7 ./packages/*.deb
+          for cli in opn-captive-voucher opn-captive-sessions opn-update-aliases; do
+            test "$(command -v "$cli")" = "/usr/sbin/$cli"
+          done
+          opn-captive-voucher --help
+          opn-captive-sessions --help
+          python3 -c 'from linuxmusterOPNsense.LinuxmusterOPNsenseAPI import sanitize_alias_name as s; assert s("classroom-studentcomputer") == "classroom_studentcomputer"'
+          # a missing school configuration is a clean error (exit 1, no traceback).
+          # `! cmd` would be a no-op under set -e, so test the exit status explicitly.
+          if opn-captive-voucher --school nonexistent list 2>err.log; then
+            echo "::error::expected a clean failure for a missing school configuration"; exit 1
           fi
+          cat err.log
+          grep -q "was not found" err.log
+          if grep -q Traceback err.log; then echo "::error::traceback instead of a clean error"; exit 1; fi
+          test -x /var/lib/linuxmuster/hooks/device-import.post.d/opn-update-all-schools
+          test -x /etc/linuxmuster/tools/hooks/group-manager/99_kill_wlan_sessions
 
-      - name: Install build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends devscripts equivs fakeroot lintian
-          sudo mk-build-deps -i -r -t "apt-get -y --no-install-recommends" debian/control
-
-      - name: Build binary package
-        run: dpkg-buildpackage -us -uc -b
-
-      - name: Lintian (advisory)
-        run: lintian ../*.deb || true
-
-      - name: Prepare artifacts + release notes
-        run: |
-          mkdir -p dist && cp ../*.deb dist/
-          dpkg-parsechangelog -S Changes | sed '1,/^\.$/d' > release-notes.md
-          cat release-notes.md
-
-      - name: Create GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.deb \
-            --title "linuxmuster-opnsense $GITHUB_REF_NAME" \
-            --notes-file release-notes.md
+  release:
+    needs: [gate, build, install-smoke]
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: packages
+          path: packages/
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: ${{ github.ref_name }}
+          prerelease: ${{ contains(github.ref_name, '-rc') }}
+          files: |
+            packages/*.deb
+            packages/*.changes
+          generate_release_notes: true
